@@ -16,7 +16,7 @@ def generate_key():
         key_file.write(key)
     print("Chave 'secret.key' gerada com sucesso!")
 
-def load_cipher():
+def load_cipher() -> Fernet:
     try:
         with open("secret.key", "rb") as key_file:
             key = key_file.read()
@@ -26,7 +26,7 @@ def load_cipher():
         return load_cipher()
     return Fernet(key)
 
-def encrypt_data(data: bytes) -> bytes:
+def encrypt_data(cipher: Fernet, data: bytes) -> bytes:
     # The original data is logged before encryption
     logging.info("Original data: %s", data.decode(errors='ignore'))
     encrypted = cipher.encrypt(data)
@@ -34,7 +34,7 @@ def encrypt_data(data: bytes) -> bytes:
     logging.info("Encrypted data: %s", encrypted.decode(errors='ignore'))
     return encrypted
 
-def decrypt_data(data: bytes) -> bytes:
+def decrypt_data(cipher: Fernet, data: bytes) -> bytes:
     # The encrypted data is logged before decryption
     logging.info("Encrypted data for decryption: %s", data.decode(errors='ignore'))
     decrypted = cipher.decrypt(data)

@@ -27,7 +27,11 @@ class EncryptedFS(LoggingMixIn, Operations):
             st_ctime=now,
             st_mtime=now,
             st_atime=now,
-            st_nlink=2)
+            st_nlink=2,
+            st_size=0)
+        # The encryption cypher is initialized
+        self.cipher = load_cipher()
+
 
     def chmod(self, path, mode):
         self.files[path]['st_mode'] &= 0o770000
@@ -48,7 +52,7 @@ class EncryptedFS(LoggingMixIn, Operations):
             st_atime=time())
 
         # the data for the file is initialized as empty bytes
-        self.data[path] = encrypt_data(b'')
+        self.data[path] = encrypt_data(self.cipher, b'')
         self.fd += 1
         return self.fd
 
@@ -82,6 +86,8 @@ class EncryptedFS(LoggingMixIn, Operations):
         self.files['/']['st_nlink'] += 1
 
     def open(self, path, flags):
+        if path not in self.files:
+            raise FuseOSError(ENOENT)
         self.fd += 1
         return self.fd
 
@@ -91,13 +97,12 @@ class EncryptedFS(LoggingMixIn, Operations):
 
         try:
             # the data is totally decrypted before slicing
-            plaintext_full_content = decrypt_data(encrypted_full_content)
+            decrypted_data = decrypt_data(self.cipher, encrypted_full_content)
         except Exception as e:
             logging.error("Falha ao descriptografar %s: %s", path, e)
             raise FuseOSError(ENOENT)
 
-        # the data is sliced to return only the requested part
-        return plaintext_full_content[offset:offset + size]
+        return decrypted_data[offset:offset + size]
 
     def readdir(self, path, fh):
         return ['.', '..'] + [x[1:] for x in self.files if x != '/']
@@ -140,13 +145,13 @@ class EncryptedFS(LoggingMixIn, Operations):
 
     def truncate(self, path, length, fh=None):
         try:
-            plaintext = decrypt_data(self.data[path])
+            plaintext = decrypt_data(self.cipher, self.data[path])
         except Exception:
             plaintext = b''
 
         new_plaintext = plaintext[:length].ljust(length, b'\x00')
 
-        self.data[path] = encrypt_data(new_plaintext)
+        self.data[path] = encrypt_data(self.cipher, new_plaintext)
 
         self.files[path]['st_size'] = length
         self.files[path]['st_mtime'] = time()
@@ -163,14 +168,18 @@ class EncryptedFS(LoggingMixIn, Operations):
 
     def write(self, path, data, offset, fh):
         try:
-            current_plaintext = decrypt_data(self.data[path])
+            current_plaintext = decrypt_data(self.cipher, self.data[path])
         except Exception:
             current_plaintext = b''
 
-        new_plaintext = current_plaintext[:offset] + data + current_plaintext[offset + len(data):]
+        if offset > len(current_plaintext):
+            current_plaintext += b'\x00' * (offset - len(current_plaintext))
 
+        new_plaintext = current_plaintext[:offset] + data
+        if offset + len(data) < len(current_plaintext):
+            new_plaintext += current_plaintext[offset + len(data):]
         # The complete content is encrypted before being written
-        self.data[path] = encrypt_data(new_plaintext)
+        self.data[path] = encrypt_data(self.cipher, new_plaintext)
         # Update the file metadata
         self.files[path]['st_size'] = len(new_plaintext)
         self.files[path]['st_mtime'] = time()
