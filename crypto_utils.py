@@ -9,9 +9,22 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
 
-# Fixed keys only for demonstration
-key = Fernet.generate_key()
-cipher = Fernet(key)
+# The key generation should be called only once to create a key file
+def generate_key():
+    key = Fernet.generate_key()
+    with open("secret.key", "wb") as key_file:
+        key_file.write(key)
+    print("Chave 'secret.key' gerada com sucesso!")
+
+def load_cipher():
+    try:
+        with open("secret.key", "rb") as key_file:
+            key = key_file.read()
+    except FileNotFoundError:
+        # If the key file does not exist, generate a new key
+        generate_key()
+        return load_cipher()
+    return Fernet(key)
 
 def encrypt_data(data: bytes) -> bytes:
     # The original data is logged before encryption
@@ -28,3 +41,7 @@ def decrypt_data(data: bytes) -> bytes:
     # The decrypted data is logged after decryption
     logging.info("Decrypted data: %s", decrypted.decode(errors='ignore'))
     return decrypted
+
+
+
+

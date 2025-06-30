@@ -47,6 +47,8 @@ class EncryptedFS(LoggingMixIn, Operations):
             st_mtime=time(),
             st_atime=time())
 
+        # the data for the file is initialized as empty bytes
+        self.data[path] = encrypt_data(b'')
         self.fd += 1
         return self.fd
 
@@ -84,8 +86,18 @@ class EncryptedFS(LoggingMixIn, Operations):
         return self.fd
 
     def read(self, path, size, offset, fh):
-        rv = self.data[path][offset:offset + size]
-        return decrypt_data(rv)
+        # The data is read in its entirety
+        encrypted_full_content = self.data[path]
+
+        try:
+            # the data is totally decrypted before slicing
+            plaintext_full_content = decrypt_data(encrypted_full_content)
+        except Exception as e:
+            logging.error("Falha ao descriptografar %s: %s", path, e)
+            raise FuseOSError(ENOENT)
+
+        # the data is sliced to return only the requested part
+        return plaintext_full_content[offset:offset + size]
 
     def readdir(self, path, fh):
         return ['.', '..'] + [x[1:] for x in self.files if x != '/']
@@ -127,10 +139,17 @@ class EncryptedFS(LoggingMixIn, Operations):
         self.data[target] = source
 
     def truncate(self, path, length, fh=None):
-        # make sure extending the file fills in zero bytes
-        self.data[path] = self.data[path][:length].ljust(
-            length, '\x00'.encode('ascii'))
+        try:
+            plaintext = decrypt_data(self.data[path])
+        except Exception:
+            plaintext = b''
+
+        new_plaintext = plaintext[:length].ljust(length, b'\x00')
+
+        self.data[path] = encrypt_data(new_plaintext)
+
         self.files[path]['st_size'] = length
+        self.files[path]['st_mtime'] = time()
 
     def unlink(self, path):
         self.data.pop(path)
@@ -143,15 +162,19 @@ class EncryptedFS(LoggingMixIn, Operations):
         self.files[path]['st_mtime'] = mtime
 
     def write(self, path, data, offset, fh):
-        # Data is encrypted before being written
-        data = encrypt_data(data)
-        self.data[path] = (
-            # make sure the data gets inserted at the right offset
-            self.data[path][:offset].ljust(offset, '\x00'.encode('ascii'))
-            + data
-            # and only overwrites the bytes that data is replacing
-            + self.data[path][offset + len(data):])
-        self.files[path]['st_size'] = len(self.data[path])
+        try:
+            current_plaintext = decrypt_data(self.data[path])
+        except Exception:
+            current_plaintext = b''
+
+        new_plaintext = current_plaintext[:offset] + data + current_plaintext[offset + len(data):]
+
+        # The complete content is encrypted before being written
+        self.data[path] = encrypt_data(new_plaintext)
+        # Update the file metadata
+        self.files[path]['st_size'] = len(new_plaintext)
+        self.files[path]['st_mtime'] = time()
+
         return len(data)
 
 
