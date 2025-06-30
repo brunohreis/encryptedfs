@@ -1,2 +1,3 @@
 *.txt
 *.key
+/__pycache__/
